@@ -176,6 +176,10 @@ object DependencyGroups {
     scalaTest
   )
 
+  val traceLogger: Seq[ModuleID] = Seq(
+    "com.lihaoyi" %% "upickle" % "1.3.8"
+  )
+
   val decompiler: Seq[ModuleID] = Seq(
     scalaLibrary,
     scalaReflect,
@@ -196,6 +200,6 @@ object DependencyGroups {
     compilerBridgeSources_2_11,
     compilerBridgeSources_2_13,
     dottySbtBridge,
-    scala3SbtBridge,
+    scala3SbtBridge
   )
 }
