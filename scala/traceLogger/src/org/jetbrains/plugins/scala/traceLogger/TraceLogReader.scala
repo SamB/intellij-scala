@@ -7,10 +7,11 @@ import scala.annotation.tailrec
 import scala.io.Source
 
 
-abstract class TraceLogReader[+Node] {
+abstract class TraceLogReader {
+  type Node
 
-  protected[this] def createMsgNode(msg: TraceLoggerEntry.Msg): Node
-  protected[this] def createEnclosingNode(start: TraceLoggerEntry.Start, inners: Seq[Node], result: EnclosingResult): Node
+  protected def createMsgNode(msg: TraceLoggerEntry.Msg): Node
+  protected def createEnclosingNode(start: TraceLoggerEntry.Start, inners: Seq[Node], result: EnclosingResult): Node
 
   final def readStream(stream: java.io.InputStream): Seq[Node] =
     readSource(Source.fromInputStream(stream))
