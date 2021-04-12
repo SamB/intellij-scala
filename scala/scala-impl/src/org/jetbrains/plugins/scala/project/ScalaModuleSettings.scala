@@ -1,23 +1,31 @@
 package org.jetbrains.plugins.scala.project
 
-import java.io.File
-import java.util.jar.Attributes
-
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.roots.impl.libraries.LibraryEx
-import com.intellij.openapi.roots.{OrderEnumerator, libraries}
+import com.intellij.openapi.roots.libraries.Library
+import com.intellij.openapi.roots.{OrderEnumerator, OrderRootType, libraries}
 import com.intellij.openapi.util.ModificationTracker
 import com.intellij.openapi.util.io.JarUtil.{containsEntry, getJarAttribute}
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.CommonProcessors.FindProcessor
 import org.jetbrains.plugins.scala.macroAnnotations.Cached
 import org.jetbrains.plugins.scala.project.ScalaLanguageLevel._
-import org.jetbrains.plugins.scala.project.ScalaModuleSettings.{Yimports, YnoPredefOrNoImports, isMetaParadiseJar}
+import org.jetbrains.plugins.scala.project.ScalaModuleSettings.{ScalaVersionProvider, Yimports, YnoPredefOrNoImports, isMetaParadiseJar}
 import org.jetbrains.plugins.scala.project.settings.{ScalaCompilerConfiguration, ScalaCompilerSettings}
 import org.jetbrains.sbt.settings.SbtSettings
 
-private class ScalaModuleSettings(module: Module, val scalaSdk: LibraryEx) {
+import java.io.File
+import java.util.jar.Attributes
 
-  val scalaLanguageLevel: ScalaLanguageLevel = scalaSdk.properties.languageLevel
+private class ScalaModuleSettings(module: Module, val scalaVersionProvider: ScalaVersionProvider) {
+
+  val scalaSdk: Option[LibraryEx] = scalaVersionProvider match {
+    case ScalaVersionProvider.FromScalaSdk(library) => Some(library)
+    case _ => None
+  }
+  val compilerVersion: Option[String] = scalaVersionProvider.compilerVersion
+
+  val scalaLanguageLevel: ScalaLanguageLevel = scalaVersionProvider.languageLevel
 
   val settingsForHighlighting: Seq[ScalaCompilerSettings] =
     ScalaCompilerConfiguration.instanceIn(module.getProject).settingsForHighlighting(module)
@@ -49,15 +57,9 @@ private class ScalaModuleSettings(module: Module, val scalaSdk: LibraryEx) {
     }
 
   val isTrailingCommasEnabled: Boolean = {
-    val `is scala 2.12.2` = scalaSdk.compilerVersion.map {
-      Version(_)
-    }.exists {
-      _ >= Version("2.12.2")
-    }
-    val `is sbt 1.0` = sbtVersion.exists {
-      _ >= Version("1.0")
-    }
-    `is scala 2.12.2`|| `is sbt 1.0`
+    val version = compilerVersion.map(Version.apply)
+    val `is scala 2.12.2` = version.exists(_ >= Version("2.12.2"))
+    `is scala 2.12.2`
   }
 
   val literalTypesEnabled: Boolean = scalaLanguageLevel >= ScalaLanguageLevel.Scala_2_13 ||
@@ -103,17 +105,63 @@ private class ScalaModuleSettings(module: Module, val scalaSdk: LibraryEx) {
 
 private object ScalaModuleSettings {
 
+  sealed trait ScalaVersionProvider {
+    def languageLevel: ScalaLanguageLevel
+    def compilerVersion: Option[String]
+  }
+  object ScalaVersionProvider {
+    case class FromScalaSdk(library: LibraryEx) extends ScalaVersionProvider {
+      override def languageLevel: ScalaLanguageLevel = library.properties.languageLevel
+      override def compilerVersion: Option[String] = library.compilerVersion
+    }
+    case class Explicit(languageLevel: ScalaLanguageLevel, compilerVersion: Option[String]) extends ScalaVersionProvider
+
+    def fromFullVersion(scalaVersion: String): Explicit = {
+      val languageLevel = ScalaLanguageLevel.findByVersion(scalaVersion).getOrElse(ScalaLanguageLevel.getDefault)
+      ScalaVersionProvider.Explicit(languageLevel, Some(scalaVersion))
+    }
+  }
+
   def apply(module: Module): Option[ScalaModuleSettings] = {
-    val processor: FindProcessor[libraries.Library] = _.isScalaSdk
+    if (module.isBuildModule) {
+      // build module doesn't have Scala SDK
+      forSbtBuildModule(module)
+    } else {
+      val processor: FindProcessor[libraries.Library] = _.isScalaSdk
 
-    OrderEnumerator.orderEntries(module)
-      .librariesOnly
-      .forEachLibrary(processor)
+      OrderEnumerator.orderEntries(module)
+        .librariesOnly
+        .forEachLibrary(processor)
 
-    val scalaSdk = processor.getFoundValue.asInstanceOf[LibraryEx]
+      val scalaSdk = processor.getFoundValue.asInstanceOf[LibraryEx]
 
-    Option(scalaSdk)
-      .map(new ScalaModuleSettings(module, _))
+      Option(scalaSdk)
+        .map(ScalaVersionProvider.FromScalaSdk)
+        .map(new ScalaModuleSettings(module, _))
+    }
+  }
+
+  private def forSbtBuildModule(module: Module): Option[ScalaModuleSettings] =
+    for {
+      sbtAndPluginsLib <- {
+        val processor: FindProcessor[libraries.Library] = _.getName.endsWith(org.jetbrains.sbt.Sbt.BuildLibraryName)
+        OrderEnumerator.orderEntries(module).librariesOnly.forEachLibrary(processor)
+        Option(processor.getFoundValue)
+      }
+      scalaVersion <- scalaVersionFromForSbtClasspath(sbtAndPluginsLib)
+    } yield {
+      val versionProvider = ScalaVersionProvider.fromFullVersion(scalaVersion)
+      new ScalaModuleSettings(module, versionProvider)
+    }
+
+  private val LibraryVersionReg = "\\d+\\.\\d+\\.\\d+".r
+
+  // Example of scala lib path in sbt 1.3.13 classpath:
+  // ~/.sbt/boot/scala-2.12.10/lib/scala-library.jar
+  private def scalaVersionFromForSbtClasspath(sbtLib: Library): Option[String] = {
+    val classpath = sbtLib.getFiles(OrderRootType.CLASSES): Array[VirtualFile]
+    val scalaLibraryJar = classpath.find(f => LibraryExt.isRuntimeLibrary(f.getName))
+    scalaLibraryJar.map(_.getPath).flatMap(LibraryVersionReg.findFirstIn)
   }
 
   private object Yimports {
