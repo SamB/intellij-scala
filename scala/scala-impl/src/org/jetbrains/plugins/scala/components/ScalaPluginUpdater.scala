@@ -3,7 +3,6 @@ package org.jetbrains.plugins.scala.components
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
-
 import com.intellij.ide.plugins._
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.notification._
@@ -20,6 +19,7 @@ import com.intellij.openapi.util.{BuildNumber, JDOMUtil, SystemInfo}
 import com.intellij.openapi.vfs.CharsetToolkit
 import com.intellij.util.io.HttpRequests
 import com.intellij.util.io.HttpRequests.Request
+
 import javax.swing.event.HyperlinkEvent
 import org.jdom.JDOMException
 import org.jetbrains.plugins.scala.settings.ScalaApplicationSettings
@@ -28,6 +28,7 @@ import org.jetbrains.plugins.scala.settings.ScalaApplicationSettings.pluginBranc
 import org.jetbrains.plugins.scala.util.{ScalaNotificationGroups, UnloadAwareDisposable}
 import org.jetbrains.plugins.scala.{ScalaFileType, extensions}
 
+import scala.annotation.nowarn
 import scala.xml.transform.{RewriteRule, RuleTransformer}
 
 class InvalidRepoException(what: String) extends Exception(what)
@@ -222,6 +223,7 @@ object ScalaPluginUpdater {
         NotificationType.WARNING)
     }
 
+    @nowarn("cat=deprecation")
     def getPlatformUpdateResult: Option[CheckForUpdateResult] = {
       val url = ApplicationInfoEx.getInstanceEx.getUpdateUrls.getCheckingUrl
 
